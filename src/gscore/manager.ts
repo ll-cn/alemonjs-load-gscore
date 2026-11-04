@@ -564,6 +564,30 @@ export class GSCoreManager {
       }
     })
     await this.waitForReady()
+    const listener = await this.listeningPID(getPort())
+    if (listener && child.pid && listener !== child.pid) {
+      logger.debug(`[GsCore] 端口 ${getPort()} 实际由 PID ${listener} 监听（启动根进程 PID ${child.pid}），停止时按进程树结束`)
+    }
+  }
+
+  private async stopProcessTree(pid: number): Promise<void> {
+    if (process.platform === 'win32') {
+      // GsCore 由 supervisor 父进程守护真正干活的服务进程，只结束根 PID 会留下
+      // 仍占着端口的子进程（表现为「停止/重启点了没反应」），所以按整棵子树结束。
+      try {
+        await run('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 20_000 })
+      } catch {
+        // 进程可能已经退出，taskkill 会返回非零，无需处理。
+      }
+      return
+    }
+    try { process.kill(pid, 'SIGTERM') } catch { return }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      try { process.kill(pid, 0) } catch { return }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    try { process.kill(pid, 'SIGKILL') } catch { /* 进程可能已在等待期间退出。 */ }
   }
 
   private async stopLocalProcess(): Promise<void> {
@@ -578,13 +602,7 @@ export class GSCoreManager {
       let pid = await this.managedLocalPID()
       if (!pid) pid = await this.adoptRunningProcess(true)
       if (pid) {
-        try { process.kill(pid, 'SIGTERM') } catch { this.clearManagedProcess(pid); this.reachable = false; return }
-        const deadline = Date.now() + 10_000
-        while (Date.now() < deadline) {
-          try { process.kill(pid, 0) } catch { this.clearManagedProcess(pid); this.reachable = false; return }
-          await new Promise(resolve => setTimeout(resolve, 100))
-        }
-        try { process.kill(pid, 'SIGKILL') } catch { /* 进程可能已在等待期间退出。 */ }
+        await this.stopProcessTree(pid)
         this.clearManagedProcess(pid)
         this.reachable = false
         return
@@ -599,13 +617,14 @@ export class GSCoreManager {
       this.reachable = false
       return
     }
-    await new Promise<void>(resolve => {
-      let settled = false
-      const finish = () => { if (!settled) { settled = true; resolve() } }
-      const timer = setTimeout(() => { child.kill('SIGKILL'); finish() }, 10_000)
-      child.once('exit', () => { clearTimeout(timer); finish() })
-      child.kill('SIGTERM')
-    })
+    if (child.pid) {
+      const exited = new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 15_000)
+        child.once('exit', () => { clearTimeout(timer); resolve() })
+      })
+      await this.stopProcessTree(child.pid)
+      await exited
+    }
     this.localProcess = null
     if (child.pid) this.clearManagedProcess(child.pid)
     this.reachable = false
