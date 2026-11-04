@@ -20,6 +20,9 @@ export default function Manage() {
   const [notice, setNotice] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [action, setAction] = useState('')
+  const [depsUpgrading, setDepsUpgrading] = useState(false)
+  const [depsPhase, setDepsPhase] = useState('')
+  const [depsNotice, setDepsNotice] = useState('')
 
   const refresh = useCallback(async () => {
     setRefreshing(true)
@@ -29,6 +32,25 @@ export default function Manage() {
   }, [])
 
   useEffect(() => subscribeStatus(setStatus, error => setNotice(errorText(error))), [])
+
+  useEffect(() => {
+    if (!depsUpgrading) return
+    let disposed = false
+    const timer = window.setInterval(() => {
+      void getStatus().then(status => { if (!disposed) setDepsPhase(status.task?.phase ?? '') }).catch(() => undefined)
+    }, 2000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [depsUpgrading])
+
+  const upgradeDependencies = async () => {
+    if (depsUpgrading) return
+    setDepsNotice('')
+    setDepsPhase('')
+    setDepsUpgrading(true)
+    try { await runAction('upgrade-deps'); setDepsNotice('依赖已同步，重启 GsCore 后生效') }
+    catch (error) { setDepsNotice(errorText(error)) }
+    finally { setDepsUpgrading(false); setDepsPhase('') }
+  }
 
   const execute = async (name: string) => {
     if (action) return
@@ -65,6 +87,12 @@ export default function Manage() {
         {status?.installed && <button className="button" type="button" disabled={locked} onClick={() => void execute('restart')}>重启</button>}
       </div></div>
       <div className="operation-status">{action ? `正在${action}…` : status?.busyTask ? `正在${status.busyTask}：${status.task?.phase ?? '处理中'}…` : `PID ${status?.pid ?? '—'} · ${status?.processOwner === 'plugin' ? '插件托管' : externalProcess ? '外部托管' : '未运行'}`}</div>
+    </section>
+
+    <section className="card">
+      <div className="section-title"><div><h2>依赖</h2><p className="field-hint">按 GsCore 源码里的依赖声明重新同步 Python 环境；外部托管时也能用，升级后需重启 GsCore 生效。</p></div><button className="button primary" type="button" disabled={depsUpgrading} onClick={() => void upgradeDependencies()}>{depsUpgrading ? '升级中…' : '一键升级'}</button></div>
+      {depsUpgrading && <div className="claim-row"><span className="muted">{depsPhase || '正在同步依赖，可能需要几分钟…'}</span></div>}
+      {!depsUpgrading && depsNotice && <div className="claim-row"><span className="muted">{depsNotice}</span></div>}
     </section>
 
     <section className="card">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { addOwnerClaim, checkConsoleAuth, getApiToken, getConfig, getConsoleDiagnostics, getOwnerClaims, getStatus, runAction, saveConfig, setApiToken, setTransport, startOwnerClaim } from '../api/web-api'
+import { addOwnerClaim, checkConsoleAuth, getApiToken, getConfig, getConsoleDiagnostics, getOwnerClaims, getStatus, saveConfig, setApiToken, setTransport, startOwnerClaim } from '../api/web-api'
 import type { ConsoleAuthCheck, ConsoleAuthDiagnostic, OwnerClaim } from '../types'
 
 function errorText(error: unknown) {
@@ -22,9 +22,6 @@ export default function Config() {
   const [consoleDiagnostics, setConsoleDiagnostics] = useState<ConsoleAuthDiagnostic[]>([])
   const [consoleDiagnosticSummary, setConsoleDiagnosticSummary] = useState('')
   const [consoleAuthCheck, setConsoleAuthCheck] = useState<ConsoleAuthCheck | null>(null)
-  const [depsUpgrading, setDepsUpgrading] = useState(false)
-  const [depsPhase, setDepsPhase] = useState('')
-  const [depsNotice, setDepsNotice] = useState('')
 
   const applyConfig = (config: Record<string, unknown>) => {
     setText(JSON.stringify(config, null, 2))
@@ -64,15 +61,6 @@ export default function Config() {
   }, [])
 
   useEffect(() => { void getStatus().then(status => { setAuthEnabled(status.managementAuthEnabled); setTransportState(status.transport) }).catch(() => undefined) }, [])
-
-  useEffect(() => {
-    if (!depsUpgrading) return
-    let disposed = false
-    const timer = window.setInterval(() => {
-      void getStatus().then(status => { if (!disposed) setDepsPhase(status.task?.phase ?? '') }).catch(() => undefined)
-    }, 2000)
-    return () => { disposed = true; window.clearInterval(timer) }
-  }, [depsUpgrading])
 
   useEffect(() => {
     let disposed = false
@@ -128,16 +116,6 @@ export default function Config() {
     catch (error) { setNotice(errorText(error)) } finally { setLoading('') }
   }
 
-  const upgradeDependencies = async () => {
-    if (depsUpgrading) return
-    setDepsNotice('')
-    setDepsPhase('')
-    setDepsUpgrading(true)
-    try { await runAction('upgrade-deps'); setDepsNotice('依赖已同步，重启 GsCore 后生效') }
-    catch (error) { setDepsNotice(errorText(error)) }
-    finally { setDepsUpgrading(false); setDepsPhase('') }
-  }
-
   const addMaster = async (claim: OwnerClaim) => {
     setLoading(`master:${claim.userId}`)
     try { await addOwnerClaim(claim.userId); applyConfig(await getConfig()); setOwnerClaims(current => current.filter(item => item.userId !== claim.userId)); setNotice('已添加为 GsCore 主人') }
@@ -158,12 +136,6 @@ export default function Config() {
     <section className="card config-card">
       <div className="section-title"><div><h2>连接</h2><p className="muted">面板使用的消息通道</p></div><span className="badge status-online">{transport === 'websocket' ? 'WebSocket' : 'HTTP'}</span></div>
       <select aria-label="桥接传输" value={transport} disabled={Boolean(loading)} onChange={event => void updateTransport(event.target.value as 'websocket' | 'http')}><option value="websocket">WebSocket（推荐）</option><option value="http">HTTP（兼容）</option></select>
-    </section>
-
-    <section className="card">
-      <div className="section-title"><div><h2>依赖</h2><p className="field-hint">按 GsCore 源码里的依赖声明重新同步 Python 环境；升级后需重启 GsCore 生效。</p></div><button className="button primary" type="button" disabled={depsUpgrading} onClick={() => void upgradeDependencies()}>{depsUpgrading ? '升级中…' : '一键升级'}</button></div>
-      {depsUpgrading && <div className="claim-row"><span className="muted">{depsPhase || '正在同步依赖，可能需要几分钟…'}</span></div>}
-      {!depsUpgrading && depsNotice && <div className="claim-row"><span className="muted">{depsNotice}</span></div>}
     </section>
 
     <section className="card register-code-card"><div><h2>REGISTER_CODE</h2><p className="field-hint">首次注册 WebConsole 管理员时使用</p></div><div className="register-code-input"><input aria-label="REGISTER_CODE" type="password" value={registerCode} onChange={event => { setRegisterCopied(false); updateRegisterCode(event.target.value) }} placeholder="未设置" /><button className="button" type="button" disabled={!registerCode} onClick={() => void copyRegisterCode()}>{registerCopied ? '已复制' : '复制'}</button></div></section>
